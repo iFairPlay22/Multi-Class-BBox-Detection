@@ -1,9 +1,10 @@
+import string
 import tensorflow as tf
 import numpy as np
 from tensorflow import keras
 from keras.applications import ResNet152 as EncoderModel
-from keras.models import Sequential, Model
-from keras.layers import Conv2D, MaxPooling2D, Dense, Activation, Dropout, Flatten, BatchNormalization, Input
+from keras.models import Model
+from keras.layers import Dense, Dropout, Flatten, Input
 import matplotlib.pyplot as plt
 from PIL import Image
 import numpy as np
@@ -12,7 +13,6 @@ import os
 import absl.logging
 import re
 import random
-from bs4 import BeautifulSoup
 from tqdm import tqdm
 import scipy.io
 
@@ -26,37 +26,34 @@ absl.logging.set_verbosity(absl.logging.ERROR)
 
 # ACTIONS
 TODO = [ 
-    "from_scratch",
-    "preprocess", 
-    "train", 
-    "evaluate", 
+    # "from_scratch",
+    # "preprocess", 
+    # "train", 
+    # "evaluate", 
     "test", 
 ]
 
 # DATASETS
-DATASET_FOLDER     = os.path.join("datasets", "caltech-101")
-IMAGES_FOLDER      = os.path.join(DATASET_FOLDER, "101_ObjectCategories")
+DATASET_FOLDER     = "datasets"
+IMAGES_FOLDER      = os.path.join(DATASET_FOLDER, "Images")
 ANNOTATIONS_FOLDER = os.path.join(DATASET_FOLDER, "Annotations")
-CLASS_LIST         = [
-    { "name": "Airplane", "imagesName": "airplanes", "annotationsName": "Airplanes_Side_2"},
-    { "name": "Moto", "imagesName": "Motorbikes", "annotationsName": "Motorbikes_16"}
-]
-CLASSES            = { i : CLASS_LIST[i] | { "id": i } for i in range(len(CLASS_LIST)) }
-ALLOWED_EXTENSIONS = [ ".jpg", ".jpeg", ".png" ]
+CLASSES            = [ os.path.join(IMAGES_FOLDER, file).split(os.sep)[-1] for file in os.listdir(IMAGES_FOLDER) if os.path.isdir(os.path.join(IMAGES_FOLDER, file)) ]
+IMAGE_EXT          = ".jpg"
+ANNOTATION_EXT     = ".mat"
 TRAINING_RATIO     = .9
 VALIDATION_RATIO   = .2
 IMAGE_SIZE         = (224, 224)
 
 # SAVES
-SAVES_PATH                          = "saves"
-GRAPHS_PATH                         = os.path.join(SAVES_PATH, "graphs/")
+SAVES_PATH                                = "saves"
+GRAPHS_PATH                               = os.path.join(SAVES_PATH, "graphs/")
 GRAPHS_TRAINING_LOSS_FILE_NAME            = "training_loss_history.png"
 GRAPHS_CLASS_TRAINING_LOSS_FILE_NAME      = "class_training_loss_history.png"
 GRAPHS_CLASS_TRAINING_ACCURACY_FILE_NAME  = "class_training_accuracy_history.png"
 GRAPHS_BOX_TRAINING_LOSS_FILE_NAME        = "box_training_loss_history.png"
 GRAPHS_BOX_TRAINING_ACCURACY_FILE_NAME    = "box_training_accuracy_history.png"
-CHECKPOINTS_PATH                    = os.path.join(SAVES_PATH, "checkpoints/")
-CHECKPOINTS_FILE_NAME               = "best_weights"
+CHECKPOINTS_PATH                          = os.path.join(SAVES_PATH, "checkpoints/")
+CHECKPOINTS_FILE_NAME                     = "best_weights"
 
 # TRAIN
 TRAINING_PATIENCE   = 2
@@ -66,9 +63,7 @@ DROPOUT             = .5
 LEARNING_RATE       = 1e-4
 
 # TEST
-NUMBER_OF_IMAGES_TO_TEST    = 5
-MIN_ID_TO_TEST              = 1
-MAX_ID_TO_TEST              = 200
+NUMBER_OF_IMAGES_TO_TEST = 5
 
 ####################################################################################################
 ###> Launching the programm
@@ -127,7 +122,7 @@ if "preprocess" in TODO:
             file = os.path.join(folder, f)
             if os.path.isfile(file):
                 if not(
-                    any([file.endswith(ext) for ext in ALLOWED_EXTENSIONS]) 
+                    file.endswith(IMAGE_EXT)
                         and 
                     not(isCorrupted(file))
                 ):
@@ -139,52 +134,39 @@ if "preprocess" in TODO:
         print("\nRemove bad formatted files...")
         print("Deleted %d / %d invalid images" % (num_skipped, num_total))
 
-    for d_class in CLASSES.values():
-        removeInvalidImages(os.path.join(IMAGES_FOLDER, d_class["imagesName"]))
+    for class_name in CLASSES:
+        removeInvalidImages(os.path.join(IMAGES_FOLDER, class_name))
 
 ####################################################################################################
 ###> Generate the datasets
 
-def getPathsByIdFromFolder(folder):
+def getData():
 
-    paths = {}
+    all_data = []
 
-    for f in os.listdir(folder):
-        full_path = os.path.join(folder, f)
-        if os.path.isfile(full_path):
-            currentId = list(map(int, re.findall(r'\d+', f)))[-1]
-            paths[currentId] = full_path
-    
-    return paths
+    for class_name in CLASSES:
 
-DATASETS_IMAGES_PATHS = {}
-DATASETS_ANNOTATIONS_PATHS = {}
-for d_class in CLASSES.values():
-    DATASETS_IMAGES_PATHS |= getPathsByIdFromFolder(os.path.join(IMAGES_FOLDER, d_class["imagesName"]))
-    DATASETS_ANNOTATIONS_PATHS |= getPathsByIdFromFolder(os.path.join(ANNOTATIONS_FOLDER, d_class["annotationsName"]))
+        image_path      = os.path.join(IMAGES_FOLDER,      class_name)
+        annotation_path = os.path.join(ANNOTATIONS_FOLDER, class_name)
 
-def getPathsFromId(id):
+        for file in os.listdir(image_path):
 
-    imagePath      = DATASETS_IMAGES_PATHS[id] if id in DATASETS_IMAGES_PATHS else None
-    annotationPath = DATASETS_ANNOTATIONS_PATHS[id] if id in DATASETS_ANNOTATIONS_PATHS else None
+            image_full_path      = os.path.join(image_path,      file)
+            annotation_full_path = os.path.join(annotation_path, file.replace(IMAGE_EXT, ANNOTATION_EXT))
 
-    if not(imagePath) or not(annotationPath):
-        print("\nWarning: Can't find the image with the id " + str(image_id_to_test))
-        return None
+            if os.path.isfile(image_full_path) and os.path.isfile(annotation_full_path):
+                all_data.append((image_full_path, annotation_full_path, class_name))
+            else:
+                print(f"Warning: Missing annotated file {annotation_full_path}, matching with {image_full_path}")
 
-    return imagePath, annotationPath
+    random.shuffle(all_data)
+    return all_data
 
-def getDClassIdFromAnnotationPath(annotation_path):
-    for d_class in CLASSES.values():
-        if d_class["annotationsName"] == annotation_path.split(os.sep)[-2]:
-            vector = [ 0 for i in range(len(CLASSES))]
-            vector[d_class["id"]] = 1
-            return d_class["id"], np.array(vector, dtype="int32") 
-    return None, None
+ALL_DATA = getData()
 
 def extractDataFromId(id):
 
-    image_path, annotation_path = getPathsFromId(id)
+    image_path, annotation_path, class_name = ALL_DATA[id]
         
     # Extract image
     image = keras.utils.load_img(image_path)
@@ -203,7 +185,10 @@ def extractDataFromId(id):
     processed_box_data =  np.array([ min_x / image_w, min_y / image_h, max_x / image_w, max_y / image_h ], dtype="float32")
 
     # Extract class
-    d_class_id, d_vector = getDClassIdFromAnnotationPath(annotation_path)
+    d_class_id = CLASSES.index(class_name)
+    d_vector = [ 0 for i in range(len(CLASSES))]
+    d_vector[d_class_id] = 1
+    d_vector = np.array(d_vector, dtype="int32") 
 
     return ( ( image, box_data ), (d_class_id, d_vector), ( processed_image, processed_box_data ) )
 
@@ -224,17 +209,25 @@ def displayImageWithTargets(img, img_dim, tgts=None, preds=None, show=True, figu
     img_w, img_h = img_dim
     plotRectangle(0, 0, img_w, img_h, color="grey", linestyle="solid")
 
+    isTgt  = not(tgts is None)
+    isPred = not(preds is None)
+
+    if isTgt and isPred:
+        plt.text(25, 25, f"{tgts['class']} / {preds['class']}", bbox=dict(facecolor='green' if tgts['class'] == preds['class'] else 'red', alpha=0.5))
+    elif isTgt:
+        plt.text(25, 25, tgts["class"],  bbox=dict(facecolor='blue', alpha=0.5))
+    elif isPred:
+        plt.text(25, 25, preds["class"], bbox=dict(facecolor='blue', alpha=0.5))
+
     # Targets
     if not(tgts is None):    
-        plt.text(25, 25, tgts["class"], bbox=dict(facecolor='black', alpha=0.5))
         min_x, min_y, max_x, max_y = tgts["box"]
-        plotRectangle(min_x*img_w, min_y*img_h, max_x*img_w, max_y*img_h, color="black", linestyle="dashed")
+        plotRectangle(min_x*img_w, min_y*img_h, max_x*img_w, max_y*img_h, color="grey", linestyle="dashed")
 
     # Pred
     if not(preds is None):    
-        plt.text(25, 50, preds["class"], bbox=dict(facecolor='red', alpha=0.5))
         min_x, min_y, max_x, max_y = preds["box"]
-        plotRectangle(min_x*img_w, min_y*img_h, max_x*img_w, max_y*img_h, color="red", linestyle="dashed")
+        plotRectangle(min_x*img_w, min_y*img_h, max_x*img_w, max_y*img_h, color="blue", linestyle="dashed")
 
     if show:
         plt.show()
@@ -246,8 +239,7 @@ if "train" in TODO or "evaluate" in TODO:
     images  = []
     boxes = []
     classes = []
-    ids = list(DATASETS_IMAGES_PATHS.keys())
-    random.shuffle(ids)
+    ids = range(len(ALL_DATA))
 
     for id in tqdm(ids):
 
@@ -257,7 +249,7 @@ if "train" in TODO or "evaluate" in TODO:
         classes.append(d_vector)
 
         # display_data = {
-        #     "class": CLASSES[d_class_id]["name"],
+        #     "class": CLASSES[d_class_id],
         #     "box": processed_box
         # }
         # displayImageWithTargets(image, image.size, display_data, figure_name="Original (" + str(id) + ")", show=False)
@@ -274,7 +266,7 @@ if "train" in TODO or "evaluate" in TODO:
         x_train, y_boxes_train, y_classes_train = ( np.asarray(images[:r]), np.asarray(boxes[:r]), np.asarray(classes[:r]) )
         print("Working with %s images, including %s for training and %s for validation" % (len(images), int(len(x_train)*(1-VALIDATION_RATIO)), int(len(x_train)*VALIDATION_RATIO)))
     
-    if "evaluate" in TODO:
+    if "evaluate" or "test" in TODO:
         x_test, y_boxes_test, y_classes_test = ( np.asarray(images[r:]), np.asarray(boxes[r:]), np.asarray(classes[r:]) )
         print("Working with %s images, including %s for tests" % (len(images), len(x_test)))
 
@@ -353,7 +345,7 @@ if "train" in TODO:
         h = history.history
 
         plt.figure("Loss history")
-        plt.plot(h["loss",],         color='red', label='Train loss')
+        plt.plot(h["loss"],         color='red', label='Train loss')
         plt.plot(h['val_loss'],      color='green', label='Val loss')
         plt.legend()
         plt.title('Training and validation loss over the time')
@@ -362,7 +354,7 @@ if "train" in TODO:
         plt.savefig(os.path.join(GRAPHS_PATH, GRAPHS_TRAINING_LOSS_FILE_NAME))
   
         plt.figure("Class loss history")
-        plt.plot(h["class_loss",],         color='red', label='Class train loss')
+        plt.plot(h["class_loss"],          color='red', label='Class train loss')
         plt.plot(h['val_class_loss'],      color='green', label='Class val loss')
         plt.legend()
         plt.title('Class training and validation loss over the time')
@@ -371,7 +363,7 @@ if "train" in TODO:
         plt.savefig(os.path.join(GRAPHS_PATH, GRAPHS_CLASS_TRAINING_LOSS_FILE_NAME))
   
         plt.figure("Box loss history")
-        plt.plot(h["box_loss",],         color='red', label='Box train loss')
+        plt.plot(h["box_loss"],          color='red', label='Box train loss')
         plt.plot(h['val_box_loss'],      color='green', label='Box val loss')
         plt.legend()
         plt.title('Box training and validation loss over the time')
@@ -461,8 +453,8 @@ if "test" in TODO:
             prediction_percentage_box[2] * img_w, 
             prediction_percentage_box[3] * img_h
         ]
-        class_name = CLASSES[d_class_id]["name"]
-        prediction_class_name = CLASSES[prediction_class_id]["name"]
+        class_name = CLASSES[d_class_id]
+        prediction_class_name = CLASSES[prediction_class_id]
 
         print("Expected (class) : " + str(class_name))
         print("Predicted (class) : " + str(prediction_class_name))
@@ -487,13 +479,7 @@ if "test" in TODO:
         plt.show()
 
     # Add random images to test
-    images_to_test = set()
-    while len(images_to_test) != NUMBER_OF_IMAGES_TO_TEST:
-        id = random.randint(MIN_ID_TO_TEST, MAX_ID_TO_TEST)
-        if getPathsFromId(id) is not None:
-            images_to_test.add(id)
-
-    for image_id_to_test in images_to_test:
+    for image_id_to_test in range(NUMBER_OF_IMAGES_TO_TEST):
         test(image_id_to_test)
     
     plt.show()
