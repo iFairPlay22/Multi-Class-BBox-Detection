@@ -26,10 +26,10 @@ absl.logging.set_verbosity(absl.logging.ERROR)
 
 # ACTIONS
 TODO = [ 
-    # "from_scratch",
-    # "preprocess", 
-    # "train", 
-    # "evaluate", 
+    "from_scratch",
+    "preprocess", 
+    "train", 
+    "evaluate", 
     "test", 
 ]
 
@@ -56,7 +56,7 @@ CHECKPOINTS_PATH                          = os.path.join(SAVES_PATH, "checkpoint
 CHECKPOINTS_FILE_NAME                     = "best_weights"
 
 # TRAIN
-TRAINING_PATIENCE   = 2
+TRAINING_PATIENCE   = 5
 EPOCHS              = 25
 BATCH_SIZE          = 32
 DROPOUT             = .5
